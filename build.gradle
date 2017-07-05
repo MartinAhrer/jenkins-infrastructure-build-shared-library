@@ -1,0 +1,34 @@
+buildscript {
+    repositories {
+        jcenter()
+    }
+    dependencies {
+    }
+}
+
+apply plugin: 'java'
+apply plugin: 'groovy'
+apply plugin: 'idea'
+
+repositories {
+    mavenCentral()
+}
+
+group 'at.software-craftsmen.jenkins'
+
+ext {
+    spockVersion = '1.1-groovy-2.4'
+    groovyVersion = '2.4.8'
+}
+
+dependencies {
+    compile "org.codehaus.groovy:groovy-all:$groovyVersion"
+}
+
+sourceSets {
+    main {
+        groovy {
+            srcDirs = ['vars', 'src']
+        }
+    }
+}
