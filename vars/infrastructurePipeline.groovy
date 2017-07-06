@@ -117,13 +117,17 @@ void removeImage(String image) {
 
 def runBuildStage(ImageName imageName, String directory) {
     requireImageName(imageName)
+    requireNonNull(directory, 'directory is required')
 
     String buildArgs = buildArguments(vcsMetadata())
-    if (directory) {
-        dir(directory) {
-            buildImage(buildArgs, imageName as String)
+    dir(directory) {
+        try {
+            dockerLint()
         }
-    } else {
+        catch (Exception) {
+            // Do not fail the build just because of lint check violations
+            currentBuild.result = 'UNSTABLE'
+        }
         buildImage(buildArgs, imageName as String)
     }
 }
