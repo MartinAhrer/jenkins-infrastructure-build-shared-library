@@ -5,124 +5,150 @@
  *      project = 'jenkins'
  *      artifact = [ 'master', 'backup']
  *      credentialsId = 'dockerRegistryDeployer'
- *  }
- *  </code>
+ *} </code>
  * </pre>
  */
+
+
+import at.softwarecraftsmen.docker.ImageName
+
+import static Objects.requireNonNull
 
 def call(Closure body) {
     // evaluate the body block, and collect configuration into the object
     def config = [:]
+    body.resolveStrategy = Closure.DELEGATE_FIRST
     body.delegate = config
     body()
 
-    config.project
-    config.artifact
-    config.dockerRegistryCredentialsId
+    def label=config.label ?: 'docker'
 
+    String tag = env.BUILD_NUMBER
+    String deliveryTag=null
 
-    node('docker') {
-        String project = 'jenkins'
-        Set artifact = ['master', 'backup']
+    String project = config.project
+    def artifact = config.artifact
 
-        stage('Prepare') {
+    node(label) {
+        stage('Setup') {
             checkout scm
+            try {
+                def gitTag=sh(script: 'git describe --tags --exact-match', returnStdout: true).trim()
+                deliveryTag = (gitTag =~ /^v?([0-9.\-]+)/)[0][1]
+            } catch (Exception e){
+            }
         }
 
-        stage ('Build') {
-            runBuildStage(config.project, config.artifact)
+        stage('Build') {
+            if (artifact instanceof Iterable) {
+                for (String a in artifact) {
+                    ImageName imageName = artifact ? new ImageName("${project}-${a}", tag) : new ImageName(project, tag)
+                    runBuildStage(imageName, a)
+                }
+            } else {
+                ImageName imageName = artifact ? new ImageName("${project}-${artifact}", tag) : new ImageName(project, tag)
+                String directory = artifact ?: './'
+                runBuildStage(imageName, directory)
+            }
         }
 
-        stage ('Delivery') {
-            runDeliveryStage(config.project, config.artifact, config.dockerRegistryCredentialsId)
+        if (deliveryTag) {
+            stage('Delivery') {
+                if (artifact instanceof Iterable) {
+                    for (String a in artifact) {
+                        ImageName imageName = artifact ? new ImageName("${project}-${a}", tag) : new ImageName(project, tag)
+                        runDeliveryStage(imageName, config.credentialsId, deliveryTag)
+                    }
+                } else {
+                    ImageName imageName = artifact ? new ImageName("${project}-${artifact}", tag) : new ImageName(project, tag)
+                    runDeliveryStage(imageName, config.credentialsId, deliveryTag)
+                }
+            }
+        }
+        stage ('Teardown') {
+            if (artifact instanceof Iterable) {
+                for (String a in artifact) {
+                    ImageName imageName = artifact ? new ImageName("${project}-${a}", tag) : new ImageName(project, tag)
+                    removeImage(imageName as String)
+                }
+            } else {
+                ImageName imageName = artifact ? new ImageName("${project}-${artifact}", tag) : new ImageName(project, tag)
+                removeImage(imageName as String)
+            }
         }
     }
 }
 
+Map<String, String> vcsMetadata() {
+    def metadata = [:]
 
-Map<String,String> vcsMetadata() {
-    def metadata=[:]
-
-    metadata.version=sh (script: 'git rev-parse HEAD', returnStdout: true).trim()
-    metadata.vcs_ref=sh (script: 'git describe --tags', returnStdout: true).trim()
-    metadata.vcs_url=sh (script: 'git config --get remote.origin.url', returnStdout: true).trim()
-    metadata.vcs_branch=sh (script: 'git rev-parse --abbrev-ref HEAD', returnStdout: true).trim()
-    metadata.build_date=sh (script: 'date -u +"%Y-%m-%dT%H:%M:%SZ"', returnStdout: true).trim()
+    metadata.version = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+    metadata.vcs_ref = sh(script: 'git describe --tags', returnStdout: true).trim()
+    metadata.vcs_url = sh(script: 'git config --get remote.origin.url', returnStdout: true).trim()
+    metadata.vcs_branch = sh(script: 'git rev-parse --abbrev-ref HEAD', returnStdout: true).trim()
+    metadata.build_date = sh(script: 'date -u +"%Y-%m-%dT%H:%M:%SZ"', returnStdout: true).trim()
     return metadata
 }
 
 String buildArguments(Map arguments) {
-    def args=""
+    def args = ""
     for (a in arguments) {
         args <<= " --build-arg ${a.key}=${a.value}"
     }
     args
 }
 
-def buildImage(String arguments, String image) {
+void buildImage(String arguments, String image) {
+    echo "Building ${image}"
     sh "docker build ${arguments} -t ${image} ."
 }
 
-def tagImage(String sourceImage, String targetImage) {
+void tagImage(String sourceImage, String targetImage) {
     sh(script: "docker tag ${sourceImage} ${targetImage}")
 }
 
-def pushImage(String image) {
+void pushImage(String image) {
     sh "docker push ${image}"
 }
 
-def removeImage(String image) {
+void removeImage(String image) {
     sh "docker image rm ${image}"
 }
 
-def runBuildStage(String project, Set artifacts) {
-    for (String artifact in artifacts) {
-        echo "-------------------------------"
-        echo "Building ${artifact}"
-        runBuildStage(project, artifact)
+def runBuildStage(ImageName imageName, String directory) {
+    requireImageName(imageName)
+
+    String buildArgs = buildArguments(vcsMetadata())
+    if (directory) {
+        dir(directory) {
+            buildImage(buildArgs, imageName as String)
+        }
+    } else {
+        buildImage(buildArgs, imageName as String)
     }
 }
 
-def runBuildStage(String project, String artifact) {
-    dir (artifact) {
-        String buildArgs=buildArguments(vcsMetadata())
-        buildImage (buildArgs, buildImageName(project, artifact))
-    }
+private requireImageName(ImageName imageName) {
+    requireNonNull(imageName, 'imageName is required')
 }
 
-def runDeliveryStage(String project, Set artifacts, String credentialsId) {
-    for (String artifact in artifacts) {
-        echo "-------------------------------"
-        echo "Building ${artifact}"
-        runDeliveryStage(project, artifact, credentialsId)
-    }
-}
+def runDeliveryStage(ImageName imageName, String credentialsId, String deliveryTag) {
+    requireImageName(imageName)
+    requireNonNull(credentialsId, 'credentialsId is required')
+    requireNonNull(deliveryTag, 'deliveryTag is required')
 
-def runDeliveryStage (String project, String artifact, String credentialsId) {
-    def imageName=buildImageName(project, artifact)
+    withDockerRegistry([credentialsId: credentialsId, url: "http://${env.DOCKER_REGISTRY}"]) {
+        def registryImageName = imageName.
+                withRegistry(env.DOCKER_REGISTRY).
+                withTag(deliveryTag) as String
 
-    try {
-        withDockerRegistry([credentialsId: credentialsId, url: "http://${env.DOCKER_REGISTRY}"]) {
-            def registryImageName="${env.DOCKER_REGISTRY}${imageName}"
-            tagImage imageName, registryImageName
-            try {
-                pushImage registryImageName
-            }
-            finally {
-                removeImage registryImageName
-            }
+        tagImage imageName as String, registryImageName
+        try {
+            pushImage registryImageName
+        }
+        finally {
+            removeImage registryImageName
         }
     }
-    finally {
-        removeImage imageName
-    }
 }
 
-String buildImageName(String project, String artifact) {
-    return buildImageName("${project}-${artifact}")
-}
-
-String buildImageName(String name) {
-    def tag = env.BUILD_NUMBER
-    return "${name}:${tag}"
-}
