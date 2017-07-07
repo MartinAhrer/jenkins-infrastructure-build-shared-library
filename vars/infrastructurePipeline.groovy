@@ -1,19 +1,23 @@
-/**
- * <pre>
- *  <code>
- *  infrastructurePipeline {
- *      project = 'jenkins'
- *      artifact = [ 'master', 'backup']
- *      credentialsId = 'dockerRegistryDeployer'
- *} </code>
- * </pre>
- */
+
 
 
 import at.softwarecraftsmen.docker.ImageName
 
 import static Objects.requireNonNull
 
+/**
+ * Usage example:
+ * <pre>
+ *  <code>
+ *  infrastructurePipeline {
+ *      project = 'jenkins'
+ *      artifact = [ 'master', 'backup']
+ *      credentialsId = 'dockerRegistryDeployer'
+ *  }
+ *
+ *  </code>
+ * </pre>
+ */
 def call(Closure body) {
     // evaluate the body block, and collect configuration into the object
     def config = [:]
@@ -52,19 +56,20 @@ def call(Closure body) {
             }
         }
 
-        if (deliveryTag) {
-            stage('Delivery') {
+        stage('Delivery') {
+            if (deliveryTag && config.dockerRegistry?.url) {
                 if (artifact instanceof Iterable) {
                     for (String a in artifact) {
                         ImageName imageName = artifact ? new ImageName("${project}-${a}", tag) : new ImageName(project, tag)
-                        runDeliveryStage(imageName, config.credentialsId, deliveryTag)
+                        runDeliveryStage(config.dockerRegistry, imageName, deliveryTag)
                     }
                 } else {
                     ImageName imageName = artifact ? new ImageName("${project}-${artifact}", tag) : new ImageName(project, tag)
-                    runDeliveryStage(imageName, config.credentialsId, deliveryTag)
+                    runDeliveryStage(config.dockerRegistry, imageName, deliveryTag)
                 }
             }
         }
+
         stage ('Teardown') {
             if (artifact instanceof Iterable) {
                 for (String a in artifact) {
@@ -136,12 +141,13 @@ private requireImageName(ImageName imageName) {
     requireNonNull(imageName, 'imageName is required')
 }
 
-def runDeliveryStage(ImageName imageName, String credentialsId, String deliveryTag) {
+def runDeliveryStage(Map registry, ImageName imageName, String deliveryTag) {
     requireImageName(imageName)
-    requireNonNull(credentialsId, 'credentialsId is required')
+    requireNonNull(registry.url, 'url is required')
+    requireNonNull(registry.credentialsId, 'credentialsId is required')
     requireNonNull(deliveryTag, 'deliveryTag is required')
 
-    withDockerRegistry([credentialsId: credentialsId, url: "http://${env.DOCKER_REGISTRY}"]) {
+    withDockerRegistry([credentialsId: registry.credentialsId, url: registry.url]) {
         def registryImageName = imageName.
                 withRegistry(env.DOCKER_REGISTRY).
                 withTag(deliveryTag) as String
