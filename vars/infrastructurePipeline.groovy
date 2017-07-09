@@ -87,12 +87,26 @@ def call(Closure body) {
 Map<String, String> vcsMetadata() {
     def metadata = [:]
 
-    metadata.version = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
-    metadata.vcs_ref = sh(script: 'git describe --tags', returnStdout: true).trim()
-    metadata.vcs_url = sh(script: 'git config --get remote.origin.url', returnStdout: true).trim()
-    metadata.vcs_branch = sh(script: 'git rev-parse --abbrev-ref HEAD', returnStdout: true).trim()
-    metadata.build_date = sh(script: 'date -u +"%Y-%m-%dT%H:%M:%SZ"', returnStdout: true).trim()
+    metadata.version = executeGit('git rev-parse HEAD',true)
+    metadata.vcs_ref = executeGit ('git describe --tags', false)
+    metadata.vcs_url = executeGit('git config --get remote.origin.url', true)
+    metadata.vcs_branch = executeGit('git rev-parse --abbrev-ref HEAD', true)
+    metadata.build_date = executeGit('date -u +"%Y-%m-%dT%H:%M:%SZ"', true)
     return metadata
+}
+
+
+String executeGit(String script, boolean required=true) {
+    try {
+        return sh(script: script, returnStdout: true).trim()
+    } catch (Exception ex) {
+        if (required) {
+            throw ex
+        } else {
+            echo "Exception running ${script}, ${ex.message}. Continuing!"
+            return ""
+        }
+    }
 }
 
 String buildArguments(Map arguments) {
