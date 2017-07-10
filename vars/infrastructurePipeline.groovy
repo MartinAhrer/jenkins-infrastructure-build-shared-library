@@ -32,13 +32,14 @@ def call(Closure body) {
 
     String project = config.project
     def artifact = config.artifact
+    def tagPattern = config.artifact ?: /^v?([0-9.\-]+)/
 
     node(label) {
         stage('Setup') {
             checkout scm
             try {
                 def gitTag=sh(script: 'git describe --tags --exact-match', returnStdout: true).trim()
-                deliveryTag = (gitTag =~ /^v?([0-9.\-]+)/)[0][1]
+                deliveryTag = (gitTag =~ tagPattern)[0][1]
             } catch (Exception e){
             }
         }
